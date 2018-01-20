@@ -139,9 +139,12 @@ sp p4(sp retType, sp id, sp lparen, sp formals, sp rparen, sp lbrace, sp stateme
 #endif DEBUG
 
 	sp a = sp(new Node());
-
-
-
+	//hw5:
+	SymbolType symType = TOP_T.getType(id->lexeme);
+	PRINT_COMMENT("rule p4 FuncDecl -> RetType ID LPAREN Formals RPAREN LBRACE Statements RBRACE");
+	PRINT_COMMENT("poping arguments");
+//	EMIT("add $sp, $sp, " + ToString<int>(4 * symType.argTypes.size()));
+//	EMIT("jr $ra");
 	return a;
 }
 //RetType -> Type
@@ -235,6 +238,8 @@ sp p11(sp type, sp id, TablesPtr tables, OffsetsPtr offsets) {
 	arg->id = id->lexeme;
 	a->argument = ar(arg);
 	
+	//hw5
+	a->place=id->place;
 
 
 	return a;
@@ -244,6 +249,7 @@ sp p12(sp statement, TablesPtr tables, OffsetsPtr offsets) {
 #ifdef DEBUG
 	cout << "p12" << endl;
 #endif
+	PRINT_COMMENT("rule p12 Statements -> Statement");
 	sp a = sp(new Node());
 	a->nextlist = statement->nextlist;
 	return a;
@@ -257,6 +263,7 @@ sp p13(sp statements, sp m,sp statement, TablesPtr tables, OffsetsPtr offsets) {
 	//HW5:
 	PRINT_COMMENT("rule p13 Statements -> Statements Statement");
 	sp a = sp(new Node());
+	PRINT_COMMENT("back-patching stmt->nextlist with " + m->quad);
 	CodeBuffer::instance().bpatch(statements->nextlist, m->quad);
 	a->nextlist = statement->nextlist;
 	return a;
@@ -326,6 +333,7 @@ sp p18(sp _call, sp sc, TablesPtr tables, OffsetsPtr offsets) {
 	cout << "p18" << endl;
 #endif DEBUG
 	sp a = sp(new Node());
+	RegisterPool::instance().returnRegister(_call->reg);
 
 	return a;
 };
@@ -339,6 +347,9 @@ sp p19(sp _return, sp sc, TablesPtr tables, OffsetsPtr offsets, int curr_ret_typ
 	ASSERT_ANY_OF_TYPES(curr_ret_type, types);
 	sp a = sp(new Node());
 
+
+	EMIT("jr $ra");
+
 	return a;
 }
 //Statement RETURN Exp SC
@@ -349,10 +360,13 @@ sp p20(sp _return, sp exp, sp sc, TablesPtr tables, OffsetsPtr offsets, int curr
 	ASSERT_ASSIGNABLE(curr_ret_type, exp->expressionType);
 	sp a = sp(new Node());
 
+	EMIT("move $v0, " + exp->reg->getName());
+	EMIT("jr $ra");
+
 	return a;
 };
 //Statement IF LPAREN Exp RPAREN Statement
-sp p21(sp exp, sp m, sp statement) {
+sp p21(sp exp, sp m, sp statement, sp m2) {
 #ifdef DEBUG
 	cout << "p21" << endl;
 #endif DEBUG
@@ -360,8 +374,12 @@ sp p21(sp exp, sp m, sp statement) {
 	sp a = sp(new Node());
 	//hw5:
 	PRINT_COMMENT("rule p21 Statement IF LPAREN Exp RPAREN Statement");
+	PRINT_COMMENT("back-patching exp->truelist with " + m->quad);
 	CodeBuffer::instance().bpatch(exp->truelist, m->quad);
+	PRINT_COMMENT("merging exp->falselist with stmt->nextlist");
 	a->nextlist = CodeBuffer::merge(exp->falselist, statement->nextlist);
+	PRINT_COMMENT("back - patching exp->falselist with " + m2->quad);
+	CodeBuffer::instance().bpatch(exp->falselist , m2->quad);
 	return a;
 };
 
@@ -400,7 +418,9 @@ sp p23(sp m1, sp exp, sp m2, sp statement, TablesPtr tables, OffsetsPtr offsets)
 
 	//hw5:
 	PRINT_COMMENT("rule p23 Statement-> WHILE M1 LPAREN Exp RPAREN M2 Statmenet");
+	PRINT_COMMENT("back-patching stmt->nextlist with " + m1->quad);
 	CodeBuffer::instance().bpatch(statement->nextlist, m1->quad);
+	PRINT_COMMENT("back-patching exp->truelist with " + m2->quad);
 	CodeBuffer::instance().bpatch(exp->truelist, m2->quad);
 	a->nextlist = exp->falselist;
 	EMIT("j " + m1->quad);
@@ -415,8 +435,11 @@ sp p24(sp exp, sp m1, sp s1, sp n, sp m2, sp s2) {
 	sp a = sp(new Node());
 	//hw5:
 	PRINT_COMMENT("rule p24 statement -> if (EXP) M1 S1 N ELSE M2  S2");
+	PRINT_COMMENT("back-patching exp->truelist with " + m1->quad);
 	CodeBuffer::instance().bpatch(exp->truelist, m1->quad);
+	PRINT_COMMENT("back-patching exp->falselist with " + m2->quad);
 	CodeBuffer::instance().bpatch(exp->falselist, m2->quad);
+
 	a->nextlist = CodeBuffer::merge(CodeBuffer::merge(s1->nextlist, n->nextlist), s2->nextlist);
 
 	return a;
@@ -553,7 +576,26 @@ sp p34(sp id, sp lparen, sp expList, sp rparen, TablesPtr tables, OffsetsPtr off
 		EMIT("syscall");
 		RegisterPool::instance().returnRegister(expList->reg);
 		expList->reg = NULL;
+		return a;
 	}
+	RegisterPool::instance().storeAll();
+	//previous return address
+	EMIT("sub $sp, sp, 4");
+	EMIT("sw $ra, ($sp)");
+	//arguments
+	vector<ar> args= expList->arguments;
+	for (int i = 0; i< args.size(); i++)
+	{
+		EMIT("sub $sp, sp, 4");
+		EMIT("sw "+args[i]->place+", ($sp)");
+	}
+
+	EMIT("jal " + id->lexeme);
+	//somehow we need to push the argument to the stack.
+	//we need the code to be right after id->lexeme;
+	RegisterPool::instance().restoreAll();
+	a->reg = RegisterPool::instance().getRegister();
+	EMIT("move " + a->reg->getName() + " $v0");
 	return a;
 };
 //Call -> ID LPAREN RPAREN
@@ -573,8 +615,11 @@ sp p35(sp id, sp lparen, sp rparen, TablesPtr tables, OffsetsPtr offsets) {
 
 	sp a = sp(new Node());
 	a->returnType = expectedType.type;
-
-
+	RegisterPool::instance().storeAll();
+	EMIT("jal " + id->lexeme);
+	RegisterPool::instance().restoreAll();
+	a->reg = RegisterPool::instance().getRegister();
+	EMIT("move " + a->reg->getName() + " $v0");
 	return a;
 };
 //ExpList -> Exp
@@ -598,12 +643,14 @@ sp p37(sp exp, sp comma, sp expList, TablesPtr tables, OffsetsPtr offsets) {
 	cout << "p37" << endl;
 #endif DEBUG
 	vector<int> expTypes(expList->expressionTypes);
-	vector<int>::iterator it = expTypes.begin();
-
-	expTypes.insert(it, exp->expressionType);
-
+	//vector<string> expIds(expList->expressionIds);
+	vector<int>::iterator it1 = expTypes.begin();
+	//vector<string>::iterator it2 = expIds.begin();
+	expTypes.insert(it1, exp->expressionType);
+	//expIds.insert(it2, exp->expressionId);
 	sp a = sp(new Node());
 	a->expressionTypes = expTypes;
+	//a->expressionIds = expIds;
 
 
 	return a;
@@ -653,6 +700,7 @@ sp p41(sp lparen, sp exp, sp rparen, TablesPtr tables, OffsetsPtr offsets) {
 
 	sp a = sp(new Node());
 	a->expressionType = exp->expressionType;
+	a->expressionId = exp->expressionId;
 	a->reg = exp->reg;
 	//hw5:
 	PRINT_COMMENT("rule p41 Exp -> LPAREN Exp RPAREN");
@@ -734,6 +782,7 @@ sp p44(sp _call, TablesPtr tables, OffsetsPtr offsets) {
 
 	sp a = sp(new Node());
 	a->expressionType = _call->returnType;
+	a->reg = _call->reg;
 
 
 
@@ -777,7 +826,7 @@ sp p47(sp _string, TablesPtr tables, OffsetsPtr offsets) {
 	a->expressionType = STRING;
 	//hw5:
 	PRINT_COMMENT("rule p47 Exp -> STRING");
-	EMIT_DATA("label_" + ToString<int>(str_index) + ": .asciiz" + "\"" +_string->lexeme + "\"");
+	EMIT_DATA("label_" + ToString<int>(str_index) + ": .asciiz " +_string->lexeme);
 	a->reg = RegisterPool::instance().getRegister();
 	EMIT("la " + a->reg->getName() + ", label_" + ToString<int>(str_index++));
 
@@ -849,8 +898,10 @@ sp p51(sp exp1, sp _and, sp m, sp exp2, TablesPtr tables, OffsetsPtr offsets) {
 	a->expressionType = BOOL;
 	//hw5:
 	PRINT_COMMENT("rule p51 Exp -> Exp AND Exp");
+	PRINT_COMMENT("back-patching exp1->truelist with " + m->quad);
 	CodeBuffer::instance().bpatch(exp1->truelist, m->quad);
 	a->truelist = exp2->truelist;
+	PRINT_COMMENT("merging exp1->falselist with exp2->falselist");
 	a->falselist = CodeBuffer::merge(exp1->falselist, exp2->falselist);
 	return a;
 };
@@ -872,7 +923,9 @@ sp p52(sp exp1, sp _or,sp m, sp exp2, TablesPtr tables, OffsetsPtr offsets) {
 
 	//hw5:
 	PRINT_COMMENT("rule p52 Exp -> Exp OR Exp");
+	PRINT_COMMENT("back-patching exp1->falselist with " + m->quad);
 	CodeBuffer::instance().bpatch(exp1->falselist, m->quad);
+	PRINT_COMMENT("merging exp1->truelist with exp2->truelist");
 	a->truelist = CodeBuffer::merge(exp1->truelist, exp2->truelist);
 	a->falselist = exp2->falselist;
 

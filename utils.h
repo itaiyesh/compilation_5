@@ -44,6 +44,7 @@ typedef shared_ptr<Argument> ar;
 struct Argument {
 	string id;
 	int type; //token
+	string place;
 };
 
 

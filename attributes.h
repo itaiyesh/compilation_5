@@ -47,6 +47,8 @@ struct Node {
 	 //int argumentType;
 	 vector<int> expressionTypes;
 	 int expressionType;
+	 vector<string> expressionIds;
+	 string expressionId;
 
 	 // for HW5
 	 bool boolian;
@@ -60,6 +62,7 @@ struct Node {
 	 vector<int> truelist; // for backpatching
 	 vector<int> breaklist; 
 	 Register* reg;
+
 };
 
 

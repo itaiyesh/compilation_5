@@ -57,6 +57,8 @@ void RegisterPool::storeAll() {
 		CodeBuffer::instance().emit("sub $sp, $sp, 4");
 		CodeBuffer::instance().emit("sw " + reg + ", " + "($sp)");
 	}
+	EMIT("sub $sp, sp, 4");
+	EMIT("sw $fp, ($sp)");
 }
 
 void RegisterPool::restoreAll() {
@@ -64,6 +66,8 @@ void RegisterPool::restoreAll() {
 	registers = stored.top().first;
 	unOccupied = stored.top().second;
 	stored.pop();
+	EMIT("lw $fp, ($sp)");
+	EMIT("add $sp, $sp, 4");
 	for (int i = 25; i >= 8; i--) {
 		string reg = "$" + ToString<int>(i);
 		CodeBuffer::instance().emit("lw " + reg + ", " + "($sp)");
