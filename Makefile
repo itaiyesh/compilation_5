@@ -5,4 +5,4 @@ all: clean
 clean:
 	rm -f lex.yy.c
 	rm -f parser.tab.*pp
-	rm -f hw3
+	rm -f hw5
