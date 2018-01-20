@@ -1,0 +1,305 @@
+%{
+#include "production.h"
+#include "output.hpp"
+#include <iostream>
+#include <stdlib.h>
+#include "utils.h"
+#include "bp.hpp"
+
+
+extern int yylineno;
+
+using namespace std;
+using namespace output;
+extern int yylex();
+//was original char * message...
+void yyerror(char const * message);
+
+void insertFunction(sp retType , sp id, sp formals, TablesPtr tables, OffsetsPtr offsets);
+void openFuncScope(sp formals, TablesPtr tables, OffsetsPtr offsets);
+void closeScope();
+
+int curr_ret_type;
+int while_counter;
+int switch_case_counter;
+
+DefaultsPtr defaults;
+TablesPtr tables;
+OffsetsPtr offsets;
+
+%}
+
+/*Shift/Reduce IF ELSE statements, Bison chooses shift by default, which is good*/
+%expect 1
+%token VOID INT BYTE B BOOL TRUE FALSE RETURN IF ELSE WHILE SWITCH CASE BREAK DEFAULT COLON SC COMMA LPAREN RPAREN LBRACE RBRACE ID NUM STRING
+%right ASSIGN
+%left  OR
+%left AND /*LEFT - for assigning Prec to rules*/
+%nonassoc RELOP
+%left PLUS_MINUS
+%left MUL_DIV
+%right NOT
+
+%left LEFT
+
+
+%%
+Program : 
+	_global_scope_open {
+						vector<int> StringArgs;
+						StringArgs.push_back(STRING);
+						vector<int> IntArgs;
+						IntArgs.push_back(INT);
+						SymbolType printType(StringArgs, VOID);
+						SymbolType printiType(IntArgs, VOID);
+						INSERT_FUNC("print", printType);
+						INSERT_FUNC("printi", printiType);
+						} 
+						Funcs {$$=p1($1, tables, offsets);} 
+	_global_scope_close
+	;
+_global_scope_open :  %empty 
+	{
+		#ifdef DEBUG
+		cout <<"GLOBAL SCOPE OPEN"<<endl;
+		#endif
+		SymTable t=SymTable();
+		while_counter = 0;
+		switch_case_counter = 0;
+		PUSH_T(t);
+		PUSH_O(0);	
+	}
+	;
+_global_scope_close : %empty {
+			try{
+				SymbolType symbolType = TOP_T.getType("main");
+				if(!symbolType.isFunction || !symbolType.argTypes.empty() || symbolType.type!= VOID)
+				{
+					throw ErrorMainMissing();
+				}
+				
+			}catch(SymTable::SymbolDoesNotExist & e){
+				throw ErrorMainMissing();
+			}
+			#ifdef DEBUG
+			cout <<"GLOBAL SCOPE CLOSE"<<endl;
+			#endif
+			closeScope();
+
+			
+}
+_scope_open : %empty {
+	#ifdef DEBUG
+	cout <<"Scope Open"<<endl;
+	#endif
+	SymTable t=SymTable::createWithParent(TOP_T);	
+
+	PUSH_T(t);
+	PUSH_O(TOP_O);
+
+	}
+	;
+_scope_close : %empty {
+	#ifdef DEBUG
+	cout <<"Scope Closed"<<endl;
+	#endif
+	closeScope();
+	}
+	;
+	
+Funcs : 
+	%empty {$$=p3e(tables,offsets);}|
+	FuncDecl Funcs {$$=p3($1,$2, tables, offsets); }
+	;
+
+FuncDecl :
+	RetType ID LPAREN Formals RPAREN {insertFunction($1,$2,$4, tables, offsets);} {openFuncScope($4,tables,offsets);} LBRACE Statements RBRACE {
+		$$=p4($1, $2, $3, $4, $5, $8, $9,$10, tables, offsets);
+	} _scope_close
+	;
+RetType :
+	Type {$$=p5($1, tables, offsets); }|
+	VOID {$$=p6($1, tables, offsets); }
+	;
+Formals :
+	%empty {$$=p8e(tables,offsets);}|
+	FormalsList {$$=p8($1, tables, offsets); }
+	;
+FormalsList :
+	FormalDecl {$$=p9($1, tables, offsets);} |
+	FormalDecl COMMA FormalsList {$$=p10($1, $2,$3, tables, offsets);}
+	;
+FormalDecl : 
+	Type ID {$$=p11($1, $2,tables, offsets);}
+	;
+Statements : 
+	Statement {$$=p12($1, tables, offsets);}|
+	Statements Statement {$$=p13($1, $2,tables, offsets);}
+	;
+
+marker	: 
+	IF _scope_open LPAREN Exp {$$=p21e($4);}
+	;
+	
+Statement : 
+	LBRACE _scope_open Statements RBRACE { $$=p14($1,$3,$4 ,tables, offsets);} _scope_close|
+	Type ID SC { $$=p15($1,$2,$3, tables, offsets);} |
+	Type ID ASSIGN Exp SC { $$=p16($1,$2,$3,$4,$5, tables, offsets);} |
+	ID ASSIGN Exp SC { $$=p17($1,$2,$3,$4, tables, offsets);}|
+	Call SC { $$=p18($1,$2, tables, offsets);}|
+	RETURN SC { $$=p19($1,$2,tables, offsets, curr_ret_type);}|
+	RETURN Exp SC { $$=p20($1,$2,$3, tables, offsets, curr_ret_type);}|
+	BREAK SC { $$=p25($1,$2,tables, offsets, while_counter, switch_case_counter);} |
+	SWITCH _switch_open LPAREN Exp {p26e($4);} RPAREN LBRACE CaseList RBRACE SC { $$=p26($1,$3,$4,$6,$7,$8,$9,$10, tables, offsets);POP_D;} _scope_close|
+	marker RPAREN M_BOOLEAN Statement { $$=p21($1, $3, $4);} _scope_close|
+	WHILE _while_open M_BOOLEAN LPAREN Exp {p21e($4);} RPAREN M_BOOLEAN Statement  { $$=p23($3, $5, $8, $9, tables, offsets);} _scope_close {while_counter-=1;}|
+	marker RPAREN M_BOOLEAN Statement N_BOOLEAN ELSE _scope_close M_BOOLEAN _scope_open Statement 
+													{ 
+														$$=p24($1, $3, $4, $5, $8, $10);
+													}  
+				{ 
+					$$=p22(); /*9 should be inner statement*/
+				} 
+				_scope_close
+	;
+	
+_switch_open:	
+	_scope_open {PUSH_D(0);}
+	;
+_while_open	:
+	_scope_open {while_counter+=1;}
+	;
+
+CaseList : 
+	CaseList CaseStatement {$$=p27($1, $2, tables,offsets);} |
+	CaseStatement  {$$=p28($1, tables,offsets);}
+	;
+CaseStatement : 
+	CaseDec {switch_case_counter+=1; } Statements  {$$=p29($2, $3, tables,offsets); switch_case_counter-=1;}|
+	CaseDec  {$$=p30($1, tables,offsets);}
+	;
+CaseDec : 
+	CASE NUM COLON  {$$=p31($1, $2, $3, tables,offsets);}|
+	CASE NUM B COLON  {$$=p32($1, $2, $3, $4, tables,offsets);} |
+	DEFAULT COLON  {$$=p33($1, $2, tables,offsets, defaults);}
+	;
+Call : 
+	ID  LPAREN ExpList   RPAREN %prec LEFT {$$=p34($1, $2,$3, $4, tables,offsets);} |
+	ID  LPAREN  RPAREN  %prec LEFT {$$=p35($1, $2,$3,  tables,offsets) ;}
+	;
+ExpList : 
+	Exp {$$=p36($1, tables,offsets);}|
+	Exp COMMA ExpList  {$$=p37($1,$2, $3, tables,offsets);}
+	;
+Type :
+	INT  {$$=p38($1, tables,offsets);}|
+	BYTE  {$$=p39($1, tables,offsets);}|
+	BOOL {$$=p40($1, tables,offsets);}
+	;
+Exp : 
+	LPAREN Exp RPAREN %prec LEFT  {$$=p41($1, $2,$3, tables,offsets);} |
+	Exp MUL_DIV Exp {$$=p42($1, $2,$3, tables,offsets);}|
+	Exp PLUS_MINUS Exp {$$=p42($1, $2,$3, tables,offsets);}|
+	ID  {$$=p43($1, tables,offsets);}|
+	Call {$$=p44($1, tables,offsets);}|
+	NUM {$$=p45($1, tables,offsets);}|
+	NUM B {$$=p46($1, $2, tables,offsets);}|
+	STRING {$$=p47($1, tables,offsets);}| /*TODO: Shouldn't use!*/
+	TRUE {$$=p48($1, tables,offsets);}|
+	FALSE {$$=p49($1, tables,offsets);}|
+	NOT Exp {$$=p50($1, $2, tables,offsets);}|
+	Exp AND M_BOOLEAN Exp {$$=p51($1, $2,$3,$4, tables,offsets);}|
+	Exp OR M_BOOLEAN Exp {$$=p52($1, $2,$3,$4,, tables,offsets);}|
+	Exp RELOP Exp {$$=p53($1, $2,$3, tables,offsets);}
+	;
+M_BOOLEAN :
+	{$$=p54();}
+	;
+N_BOOLEAN :
+	{$$=p55();}
+	;
+	
+
+%%
+int main()
+{
+	//TODO Add terminal for EOF !
+	//TODO: make sure this shit is freed correctly
+	tables = shared_ptr<Tables>(new Tables());
+	offsets =shared_ptr<Offsets>( new Offsets());
+	defaults = shared_ptr <Defaults> ( new Defaults());
+
+	try {
+		EMIT_DATA("err_msg1:   .asciiz \"Error division by zero\\n\"");
+		EMIT("div_by_zero:");
+		EMIT("li $v0, 4");
+		EMIT("la $a0, err_msg1");
+		EMIT("syscall");
+		EMIT("li $v0, 10");
+		EMIT("syscall");
+		int result = yyparse();
+		#ifdef DEBUG
+		cout << result <<endl;
+		#endif
+		//HW5:
+		EMIT("li $v0, 10");
+		EMIT("syscall");
+		CodeBuffer::instance().printDataBuffer();
+		CodeBuffer::instance().printCodeBuffer();
+		return result;
+	}
+	catch (Error & er)
+	{
+		er.print(yylineno);
+		exit(0);
+	}
+}
+void yyerror(char const * message)
+{
+	throw ErrorSyn();
+}
+
+
+//FuncDecl -> RetType ID  Formals
+void insertFunction(sp retType , sp id, sp formals, TablesPtr tables, OffsetsPtr offsets)	{
+	#ifdef DEBUG
+	cout << "insertFunction" <<endl;
+	#endif DEBUG
+	try {
+			SymbolType symType(getArgumentTypes(formals->arguments), retType->returnType);
+			INSERT_FUNC(id->lexeme,symType);
+		}
+		catch(SymTable::SymbolAlreadyExists & e){
+			throw ErrorDef(id->lexeme);
+		}
+	curr_ret_type = retType->returnType;
+}
+//TODO: We need to insert arguments onto scope (with -1...-2 etc) taken from 'formals'
+void openFuncScope(sp formals, TablesPtr tables, OffsetsPtr offsets)
+{
+#ifdef DEBUG
+cout << "openFuncScope" <<endl;
+#endif DEBUG
+		SymTable t=SymTable::createWithParent(TOP_T);
+		PUSH_T(t);
+		PUSH_O(TOP_O);
+
+		//TODO:get argument names...
+		#ifdef DEBUG
+		cout<<"Inserting func args"<<endl;
+		#endif DEBUG
+		vector<ar> args = formals->arguments;
+		try{
+			INSERT_FUNC_ARGS(args);
+		}
+		catch(SymTable::SymbolAlreadyExists &e){
+			throw ErrorDef(e.s);
+		}
+}
+void closeScope() {
+		//endScope();
+		//TOP_T.print();
+		
+		POP_T;
+		POP_O;
+}
