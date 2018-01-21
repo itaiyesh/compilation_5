@@ -10,6 +10,8 @@
 #include <typeinfo>
 
 #include "utils.h"
+#include "RegisterPool.h"
+
 using namespace std;
 using boost::shared_ptr;
 //TODO: put this somewhere common to parser.ypp and this file
@@ -19,7 +21,6 @@ typedef stack<int > Defaults;
 typedef shared_ptr< Defaults> DefaultsPtr;
 typedef shared_ptr< Tables> TablesPtr;
 typedef shared_ptr< Offsets> OffsetsPtr;
-//typedef shared_ptr<RegisterPool> RegPoolPtr;
 struct Node;
 typedef shared_ptr<Node > sp;
 
@@ -30,7 +31,7 @@ struct Node {
 	};
 	virtual ~Node() {
 	}
-	Node(int token, const char * lexeme): token(token),lexeme(lexeme, strlen(lexeme)), reg(NULL){
+	Node(int token, const char * lexeme): token(token),lexeme(lexeme, strlen(lexeme)), place(""){
 #ifdef DEBUG
 		cout <<"Token: "<<lexeme <<endl;
 #endif
@@ -61,7 +62,6 @@ struct Node {
 	 vector<int> falselist; // for backpatching
 	 vector<int> truelist; // for backpatching
 	 vector<int> breaklist; 
-	 Register* reg;
 
 };
 

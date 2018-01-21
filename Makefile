@@ -1,7 +1,7 @@
 all: clean
 	flex scanner.lex
 	bison -d parser.ypp -v
-	g++ -o hw5 *.c *.cpp
+	g++ -g -o hw5 *.c *.cpp -DDEBUG
 clean:
 	rm -f lex.yy.c
 	rm -f parser.tab.*pp

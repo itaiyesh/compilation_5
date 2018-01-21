@@ -69,7 +69,8 @@ _global_scope_open :  %empty
 		while_counter = 0;
 		switch_case_counter = 0;
 		PUSH_T(t);
-		PUSH_O(0);	
+		PUSH_O(0);
+		RegisterPoolManager::instance().push();
 	}
 	;
 _global_scope_close : %empty {
@@ -98,7 +99,7 @@ _scope_open : %empty {
 
 	PUSH_T(t);
 	PUSH_O(TOP_O);
-
+	RegisterPoolManager::instance().push();
 	}
 	;
 _scope_close : %empty {
@@ -283,6 +284,7 @@ cout << "openFuncScope" <<endl;
 		SymTable t=SymTable::createWithParent(TOP_T);
 		PUSH_T(t);
 		PUSH_O(TOP_O);
+		RegisterPoolManager::instance().push();
 
 		//TODO:get argument names...
 		#ifdef DEBUG
@@ -310,4 +312,5 @@ void closeScope() {
 		
 		POP_T;
 		POP_O;
+		RegisterPoolManager::instance().pop();
 }

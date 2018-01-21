@@ -4,73 +4,67 @@
  *  Created on: 19 ???? 2018
  *      Author: shurun
  */
+#include <stdexcept>
 
 #include "RegisterPool.h"
 #include "utils.h"
+#include <algorithm>
 
-void RegisterPool::delMap(map<string, Register*> m) {
-	for (map<string, Register*>::iterator it = m.begin(); it != m.end(); it++) {
-		delete (*it).second;
-	}
-}
-
-RegisterPool &RegisterPool::instance() {
-	static RegisterPool inst;//only instance
-	return inst;
-}
 
 RegisterPool::RegisterPool() {
 	for (int i = 8; i <= 25; i++) {
 		string s = "$" + ToString<int>(i);
-		registers.insert(pair<string, Register*>(s, new Register(s)));
-		unOccupied.push_back(s);
-	}
-}
-RegisterPool::~RegisterPool() {
-	delMap(registers);
-	while (!stored.empty()) {
-		delMap(stored.top().first);
-		stored.pop();
+		freeRegisters.push_back(s);
 	}
 }
 
-Register* RegisterPool::getRegister() {
-	Register* reg = registers[unOccupied.back()];
-	unOccupied.pop_back();
-	return reg;
+string RegisterPool::getRegister() {
+	if( freeRegisters.empty())
+	{
+		throw runtime_error("No more free registers");
+	}
+	else {
+		vector<string>::iterator it = freeRegisters.begin();
+		string val = *it;
+		registers.push_back(val);
+		freeRegisters.erase(it);
+		return val;
+	}
 }
 
-void RegisterPool::returnRegister(Register* reg) {
-	if (!reg) return;
-	reg->reset();
-	unOccupied.push_back(reg->getName());
-}
+void RegisterPool::freeRegister(string reg) {
+	if (reg.empty())
+	{
+		throw runtime_error("empty register name cannot be freed");
+	} else {
+		vector<string>::iterator it = find(registers.begin(), registers.end(),reg);
+		if (it==registers.end())
+		{
+			throw runtime_error("can't free, "+reg +" is not a register");
+		}else {
+			freeRegisters.push_back(*it);
+			registers.erase(it);
 
+		}
+	}
+}
 void RegisterPool::storeAll() {
-	stored.push(make_pair(registers, unOccupied));
-	registers.clear();
-	unOccupied.clear();
-	for (int i = 8; i <= 25; i++) {
-		string reg = "$" + ToString<int>(i);
-		registers.insert(pair<string, Register*>(reg, new Register(reg)));
-		unOccupied.push_back(reg);
+	for (int i = 0; registers.size(); ++i)
+	{
+
 		CodeBuffer::instance().emit("sub $sp, $sp, 4");
-		CodeBuffer::instance().emit("sw " + reg + ", " + "($sp)");
+		CodeBuffer::instance().emit("sw " + registers[i] + ", " + "($sp)");
 	}
 	EMIT("sub $sp, sp, 4");
 	EMIT("sw $fp, ($sp)");
 }
-
+//order change
 void RegisterPool::restoreAll() {
-	delMap(registers);
-	registers = stored.top().first;
-	unOccupied = stored.top().second;
-	stored.pop();
 	EMIT("lw $fp, ($sp)");
 	EMIT("add $sp, $sp, 4");
-	for (int i = 25; i >= 8; i--) {
-		string reg = "$" + ToString<int>(i);
-		CodeBuffer::instance().emit("lw " + reg + ", " + "($sp)");
+	for (int i = 0; registers.size(); ++i)
+	{
+		CodeBuffer::instance().emit("lw " + registers[i] + ", " + "($sp)");
 		CodeBuffer::instance().emit("add $sp, $sp, 4");
 	}
 }

@@ -4,8 +4,13 @@
 #include "parser.tab.hpp"
 #include "errors.h"
 #include "utils.h"
+#include "RegisterPoolManager.h"
 #include <stdlib.h>
 
+#define STORE_ALL() RegisterPoolManager::instance().storeAll()
+#define RESTORE_ALL() RegisterPoolManager::instance().restoreAll()
+#define FREE_REG(reg) RegisterPoolManager::instance().freeRegister(reg)
+#define GET_REG()  RegisterPoolManager::instance().getRegister()
 // Using macros wherever we  access to tables/offsets, easier
 #define DECLARE_VAR(type,id)  try {\
 		SymbolType symType(type->terminal->token);\
@@ -236,10 +241,12 @@ sp p11(sp type, sp id, TablesPtr tables, OffsetsPtr offsets) {
 	ar arg = ar(new Argument());
 	arg->type = type->terminal->token;
 	arg->id = id->lexeme;
+	//hw5
+	a->place= "unset";//id->place;
+
 	a->argument = ar(arg);
 	
-	//hw5
-	a->place=id->place;
+
 
 
 	return a;
@@ -305,10 +312,10 @@ sp p16(sp type, sp id, sp assign, sp exp, sp sc, TablesPtr tables, OffsetsPtr of
 	sp a = sp(new Node());
 	DECLARE_VAR(type, id);
 	//hw5:
-	PRINT_COMMENT("declaring "+id->lexeme+ " with the value in " + exp->reg->getName());
+	PRINT_COMMENT("declaring "+id->lexeme+ " with the value in " + exp->place);
 	EMIT("sub $sp, $sp, 4");
-	EMIT("sw "+ exp->reg->getName() +", ($sp)");
-	RegisterPool::instance().returnRegister(exp->reg);
+	EMIT("sw "+ exp->place +", ($sp)");
+	FREE_REG(exp->place);
 	return a;
 }
 //Statement -> ID ASSIGN Exp SC
@@ -322,9 +329,9 @@ sp p17(sp id, sp assign, sp exp, sp sc, TablesPtr tables, OffsetsPtr offsets) {
 	sp a = sp(new Node());
 	//hw5:
 	int offset = TOP_T.getOffset(id->lexeme);
-	PRINT_COMMENT("assigning to "+ id->lexeme + " the value in " + exp->reg->getName());
-	EMIT("sw " + exp->reg->getName() + ", " + ToString<int>(offset*-4) + "($fp)");
-	RegisterPool::instance().returnRegister(exp->reg);
+	PRINT_COMMENT("assigning to "+ id->lexeme + " the value in " + exp->place);
+	EMIT("sw " + exp->place + ", " + ToString<int>(offset*-4) + "($fp)");
+	FREE_REG(exp->place);
 	return a;
 }
 //Statement -> Call SC
@@ -333,7 +340,7 @@ sp p18(sp _call, sp sc, TablesPtr tables, OffsetsPtr offsets) {
 	cout << "p18" << endl;
 #endif DEBUG
 	sp a = sp(new Node());
-	RegisterPool::instance().returnRegister(_call->reg);
+	FREE_REG(_call->place);
 
 	return a;
 };
@@ -360,7 +367,7 @@ sp p20(sp _return, sp exp, sp sc, TablesPtr tables, OffsetsPtr offsets, int curr
 	ASSERT_ASSIGNABLE(curr_ret_type, exp->expressionType);
 	sp a = sp(new Node());
 
-	EMIT("move $v0, " + exp->reg->getName());
+	EMIT("move $v0, " + exp->place);
 	EMIT("jr $ra");
 
 	return a;
@@ -572,13 +579,13 @@ sp p34(sp id, sp lparen, sp expList, sp rparen, TablesPtr tables, OffsetsPtr off
 
 		int syscall_num = (id->lexeme == "printi") ? 1 : 4 ;
 		EMIT("li $v0, " + (ToString<int>(syscall_num))); //system call for printing integer;
-		EMIT("move $a0, " + ((expList->reg)? expList->reg->getName(): ""));
+		EMIT("move $a0, " + ((expList->place.empty())? expList->place: ""));
 		EMIT("syscall");
-		RegisterPool::instance().returnRegister(expList->reg);
-		expList->reg = NULL;
+		FREE_REG(expList->place);
+		expList->place="";
 		return a;
 	}
-	RegisterPool::instance().storeAll();
+	STORE_ALL();
 	//previous return address
 	EMIT("sub $sp, sp, 4");
 	EMIT("sw $ra, ($sp)");
@@ -593,9 +600,9 @@ sp p34(sp id, sp lparen, sp expList, sp rparen, TablesPtr tables, OffsetsPtr off
 	EMIT("jal " + id->lexeme);
 	//somehow we need to push the argument to the stack.
 	//we need the code to be right after id->lexeme;
-	RegisterPool::instance().restoreAll();
-	a->reg = RegisterPool::instance().getRegister();
-	EMIT("move " + a->reg->getName() + " $v0");
+	RESTORE_ALL();
+	a->place = GET_REG();
+	EMIT("move " + a->place+ " $v0");
 	return a;
 };
 //Call -> ID LPAREN RPAREN
@@ -615,11 +622,11 @@ sp p35(sp id, sp lparen, sp rparen, TablesPtr tables, OffsetsPtr offsets) {
 
 	sp a = sp(new Node());
 	a->returnType = expectedType.type;
-	RegisterPool::instance().storeAll();
+	STORE_ALL();
 	EMIT("jal " + id->lexeme);
-	RegisterPool::instance().restoreAll();
-	a->reg = RegisterPool::instance().getRegister();
-	EMIT("move " + a->reg->getName() + " $v0");
+	RESTORE_ALL();
+	a->place = GET_REG();
+	EMIT("move " + a->place + " $v0");
 	return a;
 };
 //ExpList -> Exp
@@ -632,7 +639,7 @@ sp p36(sp exp, TablesPtr tables, OffsetsPtr offsets) {
 
 	sp a = sp(new Node());
 	a->expressionTypes = expressionTypes;
-	a->reg = exp->reg;
+	a->place = exp->place;
 
 
 	return a;
@@ -690,6 +697,7 @@ sp p40(sp _bool, TablesPtr tables, OffsetsPtr offsets) {
 
 
 
+
 	return a;
 };
 //Exp -> LPAREN Exp RPAREN
@@ -701,7 +709,7 @@ sp p41(sp lparen, sp exp, sp rparen, TablesPtr tables, OffsetsPtr offsets) {
 	sp a = sp(new Node());
 	a->expressionType = exp->expressionType;
 	a->expressionId = exp->expressionId;
-	a->reg = exp->reg;
+	a->place = exp->place;
 	//hw5:
 	PRINT_COMMENT("rule p41 Exp -> LPAREN Exp RPAREN");
 	a->truelist = exp->truelist;
@@ -735,23 +743,23 @@ sp p42(sp exp1, sp binop, sp exp2, TablesPtr tables, OffsetsPtr offsets) {
 	}
 	sp a = sp(new Node());
 	a->expressionType = resultType;
-	a->reg = exp1->reg;
+	a->place = exp1->place;
 	string emit;
 	if (binop->lexeme == "+") {
-		emit = "add " + exp1->reg->getName() + ", " + exp1->reg->getName() + ", " + exp2->reg->getName();
+		emit = "add " + exp1->place + ", " + exp1->place + ", " + exp2->place;
 	}
 	else if (binop->lexeme == "-"){
-		emit = "sub " + exp1->reg->getName() + ", " + exp1->reg->getName() + ", " + exp2->reg->getName();
+		emit = "sub " + exp1->place + ", " + exp1->place + ", " + exp2->place;
 	}
 	else if (binop->lexeme == "*") {
-		emit = "mul " + exp1->reg->getName() + ", " + exp1->reg->getName() + ", " + exp2->reg->getName();
+		emit = "mul " + exp1->place + ", " + exp1->place + ", " + exp2->place;
 	}
 	else {
-		EMIT("beq " + exp2->reg->getName() + ", zero, div_by_zero");
-		emit = "div " + exp1->reg->getName() + ", " + exp1->reg->getName() + ", " + exp2->reg->getName();
+		EMIT("beq " + exp2->place + ", zero, div_by_zero");
+		emit = "div " + exp1->place + ", " + exp1->place + ", " + exp2->place;
 	}
 	EMIT(emit);
-	RegisterPool::instance().returnRegister(exp2->reg);
+	FREE_REG(exp2->place);
 	return a;
 };
 //Exp -> ID
@@ -768,9 +776,9 @@ sp p43(sp id, TablesPtr tables, OffsetsPtr offsets) {
 
 	sp a = sp(new Node());
 	a->expressionType = type;
-	a->reg = RegisterPool::instance().getRegister();
+	a->place = GET_REG();
 	int offset = TOP_T.getOffset(id->lexeme);
-	EMIT("lw " + a->reg->getName() + ", " + ToString<int>(offset*-4) + "($fp)");
+	EMIT("lw " + a->place + ", " + ToString<int>(offset*-4) + "($fp)");
 
 	return a;
 };
@@ -782,7 +790,7 @@ sp p44(sp _call, TablesPtr tables, OffsetsPtr offsets) {
 
 	sp a = sp(new Node());
 	a->expressionType = _call->returnType;
-	a->reg = _call->reg;
+	a->place = _call->place;
 
 
 
@@ -796,8 +804,8 @@ sp p45(sp num, TablesPtr tables, OffsetsPtr offsets) {
 
 	sp a = sp(new Node());
 	a->expressionType = INT;
-	a->reg = RegisterPool::instance().getRegister();
-	EMIT("li " + a->reg->getName() + ", " + num->lexeme);
+	a->place = GET_REG();
+	EMIT("li " + a->place + ", " + num->lexeme);
 	return a;
 };
 //Exp -> NUM B
@@ -810,8 +818,8 @@ sp p46(sp num, sp b, TablesPtr tables, OffsetsPtr offsets) {
 	a->expressionType = BYTE;
 	a->value = num->lexeme;
 	ASSERT_IS_BYTE(atoi(num->lexeme.c_str()), num->lexeme);
-	a->reg = RegisterPool::instance().getRegister();
-	EMIT("li " + a->reg->getName() + ", " + num->lexeme);
+	a->place = GET_REG();
+	EMIT("li " + a->place+ ", " + num->lexeme);
 
 	return a;
 };
@@ -827,8 +835,8 @@ sp p47(sp _string, TablesPtr tables, OffsetsPtr offsets) {
 	//hw5:
 	PRINT_COMMENT("rule p47 Exp -> STRING");
 	EMIT_DATA("label_" + ToString<int>(str_index) + ": .asciiz " +_string->lexeme);
-	a->reg = RegisterPool::instance().getRegister();
-	EMIT("la " + a->reg->getName() + ", label_" + ToString<int>(str_index++));
+	a->place = GET_REG();
+	EMIT("la " + a->place + ", label_" + ToString<int>(str_index++));
 
 	return a;
 };
@@ -952,8 +960,8 @@ sp p53(sp exp1, sp relop, sp exp2, TablesPtr tables, OffsetsPtr offsets) {
 	PRINT_COMMENT("rule p54 Exp -> Exp RELOP Exp");
 	string e_str;
 	string rel = relop->lexeme;
-	string reg1 = exp1->reg->getName();
-	string reg2 = exp2->reg->getName();
+	string reg1 = exp1->place;
+	string reg2 = exp2->place;
 	if (rel == "==") e_str = "beq " + reg1 + ", " + reg2 + ", ";
 	if (rel == "!=") e_str = "bne " + reg1 + ", " + reg2 + ", ";
 	if (rel == "<") e_str = "blt " + reg1 + ", " + reg2 + ", ";
@@ -962,8 +970,8 @@ sp p53(sp exp1, sp relop, sp exp2, TablesPtr tables, OffsetsPtr offsets) {
 	if (rel == ">=") e_str = "bge " + reg1 + ", " + reg2 + ", ";
 	a->truelist = CodeBuffer::makelist(EMIT(e_str));
 	a->falselist = CodeBuffer::makelist(EMIT("j "));
-	RegisterPool::instance().returnRegister(exp1->reg);
-	RegisterPool::instance().returnRegister(exp2->reg);
+	FREE_REG(exp1->place);
+	FREE_REG(exp2->place);
 
 	return a;
 };

@@ -12,7 +12,7 @@
 #include <stack>
 #include <vector>
 #include <map>
-#include "Register.h"
+#include <set>
 
 using namespace std;
 using boost::shared_ptr;
@@ -26,18 +26,15 @@ each register will hold the value of zero or
 more variables
 */
 
+
 class RegisterPool
 {
-	map<string, Register*> registers;
-	vector<string> unOccupied;
-	stack< pair< map< string, Register* >, vector< string > > > stored;
-	void delMap(map<string, Register*> m);
-	RegisterPool();
+	vector<string> registers; //used registers
+	vector<string> freeRegisters;
 public:
-	static RegisterPool &instance();
-	~RegisterPool();
-	Register* getRegister();
-	void returnRegister(Register* reg);
+	RegisterPool();
+	string getRegister();
+	void freeRegister(string reg);
 	void storeAll();
 	void restoreAll();
 };
