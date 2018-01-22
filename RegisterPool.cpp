@@ -10,12 +10,16 @@
 #include "utils.h"
 #include <algorithm>
 
-
-RegisterPool::RegisterPool() {
+vector<string> RegisterPool::getAllRegisters() {
+	vector<string> allRegisters;
 	for (int i = 8; i <= 25; i++) {
 		string s = "$" + ToString<int>(i);
-		freeRegisters.push_back(s);
+		allRegisters.push_back(s);
 	}
+	return allRegisters;
+}
+RegisterPool::RegisterPool() {
+	freeRegisters = getAllRegisters();
 }
 
 string RegisterPool::getRegister() {
@@ -49,22 +53,22 @@ void RegisterPool::freeRegister(string reg) {
 	}
 }
 void RegisterPool::storeAll() {
-	for (int i = 0; registers.size(); ++i)
+//	vector<string> allRegisters = getAllRegisters();
+	for (int i = 0; i < registers.size(); ++i)
 	{
 
-		CodeBuffer::instance().emit("sub $sp, $sp, 4");
-		CodeBuffer::instance().emit("sw " + registers[i] + ", " + "($sp)");
+		EMIT("sub $sp, $sp, 4");
+		EMIT("sw " + registers[i] + ", " + "($sp)");
 	}
-	EMIT("sub $sp, sp, 4");
-	EMIT("sw $fp, ($sp)");
+
 }
-//order change
+
 void RegisterPool::restoreAll() {
-	EMIT("lw $fp, ($sp)");
-	EMIT("add $sp, $sp, 4");
-	for (int i = 0; registers.size(); ++i)
+//	vector<string> allRegisters = getAllRegisters();
+
+	for (int i = registers.size()-1; i >=0 ; --i)
 	{
-		CodeBuffer::instance().emit("lw " + registers[i] + ", " + "($sp)");
-		CodeBuffer::instance().emit("add $sp, $sp, 4");
+		EMIT("lw " + registers[i] + ", " + "($sp)");
+		EMIT("add $sp, $sp, 4");
 	}
 }

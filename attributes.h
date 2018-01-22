@@ -31,7 +31,7 @@ struct Node {
 	};
 	virtual ~Node() {
 	}
-	Node(int token, const char * lexeme): token(token),lexeme(lexeme, strlen(lexeme)), place(""){
+	Node(int token, const char * lexeme): token(token),lexeme(lexeme, strlen(lexeme)), reg(""){
 #ifdef DEBUG
 		cout <<"Token: "<<lexeme <<endl;
 #endif
@@ -40,6 +40,7 @@ struct Node {
 	 string lexeme;
 	 //vector<int> argumentTypes;
 	 vector<ar> arguments;
+	 vector<ex> expressionList;
 	 sp terminal;
 	 int returnType;
 	 ar argument;
@@ -53,15 +54,18 @@ struct Node {
 
 	 // for HW5
 	 bool boolian;
+	 bool defalt;
 	 string value;//holds string value, unlike lexme it can change
-	 string place;// 
+	 string reg;//
 	 string quad;// mainly for markers. so it on the screenshots from lectures
 	 vector<int> nextlist; // for backpatching
-	 stack<string> value_list;
-	 stack<string> quad_list;
+	 vector<string> value_list;
+	 vector<string> quad_list;
 	 vector<int> falselist; // for backpatching
 	 vector<int> truelist; // for backpatching
 	 vector<int> breaklist; 
+	 vector< vector<int> > not_break_lists;
+	 vector<bool> defalts;
 
 };
 

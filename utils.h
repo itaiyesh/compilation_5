@@ -32,18 +32,28 @@ using namespace std;
 #define INSERT_FUNC(name,type) (TOP_T).insert(name, 0, type)
 #define INSERT_FUNC_ARGS(args) (TOP_T).insertFunctionArguments(args, 0)
 //hw5
-#define PRINT_COMMENT(comment) CodeBuffer::instance().emit("\t\t# " + string(comment))
-#define EMIT(line) CodeBuffer::instance().emit(string(line))
+int EMIT(string line) ;
+#define PRINT_COMMENT(comment) EMIT("# " + string(comment))
 #define EMIT_DATA(line) CodeBuffer::instance().emitData(string(line))
 
+
 using namespace std;
+
+struct Expression;
+typedef shared_ptr<Expression> ex;
+
+struct Expression {
+	string reg;
+};
+
+
 struct Argument;
 typedef shared_ptr<Argument> ar;
 
 struct Argument {
 	string id;
 	int type; //token
-	string place;
+	string reg;
 };
 
 

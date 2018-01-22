@@ -70,6 +70,8 @@ _global_scope_open :  %empty
 		switch_case_counter = 0;
 		PUSH_T(t);
 		PUSH_O(0);
+		
+		//TODO: notice: pop() is never called for the object created here
 		RegisterPoolManager::instance().push();
 	}
 	;
@@ -100,12 +102,14 @@ _scope_open : %empty {
 	PUSH_T(t);
 	PUSH_O(TOP_O);
 	RegisterPoolManager::instance().push();
+
+	
 	}
 	;
 _scope_close : %empty {
 	#ifdef DEBUG
 	cout <<"Scope Closed"<<endl;
-	#endif
+	#endif	
 	closeScope();
 	}
 	;
@@ -118,7 +122,8 @@ Funcs :
 FuncDecl :
 	RetType ID LPAREN Formals RPAREN {insertFunction($1,$2,$4, tables, offsets);} {openFuncScope($4,tables,offsets);} LBRACE Statements RBRACE {
 		$$=p4($1, $2, $3, $4, $5, $8, $9,$10, tables, offsets);
-	} _scope_close
+		closeScope();
+	} 
 	;
 RetType :
 	Type {$$=p5($1, tables, offsets); }|
@@ -145,25 +150,28 @@ marker	:
 	;
 	
 Statement : 
-	LBRACE _scope_open Statements RBRACE { $$=p14($1,$3,$4 ,tables, offsets);} _scope_close|
+	LBRACE _scope_open Statements RBRACE { $$=p14($1,$3,$4 ,tables, offsets);closeScope();} |
 	Type ID SC { $$=p15($1,$2,$3, tables, offsets);} |
-	Type ID ASSIGN Exp SC { $$=p16($1,$2,$3,$4,$5, tables, offsets);} |
+	Type ID ASSIGN Exp SC { $$=p16($1,$2,$3,$4,$5 ,tables, offsets);} |
 	ID ASSIGN Exp SC { $$=p17($1,$2,$3,$4, tables, offsets);}|
 	Call SC { $$=p18($1,$2, tables, offsets);}|
 	RETURN SC { $$=p19($1,$2,tables, offsets, curr_ret_type);}|
 	RETURN Exp SC { $$=p20($1,$2,$3, tables, offsets, curr_ret_type);}|
 	BREAK SC { $$=p25($1,$2,tables, offsets, while_counter, switch_case_counter);} |
-	SWITCH _switch_open LPAREN Exp {p26e($4);} RPAREN LBRACE CaseList RBRACE SC { $$=p26($1,$3,$4,$6,$7,$8,$9,$10, tables, offsets);POP_D;} _scope_close|
-	marker RPAREN M_BOOLEAN Statement %prec NO_ELSE M_BOOLEAN { $$=p21($1, $3, $4, $5);} _scope_close|
-	WHILE _while_open M_BOOLEAN LPAREN Exp {p21e($4);} RPAREN M_BOOLEAN Statement  { $$=p23($3, $5, $8, $9, tables, offsets);} _scope_close {while_counter-=1;}|
+	SWITCH_HEAD SWITCH_BODY SC { $$=p26($1, $2, tables, offsets);POP_D;closeScope();}|
+	marker RPAREN M_BOOLEAN Statement %prec NO_ELSE M_BOOLEAN { $$=p21($1, $3, $4, $5);closeScope();}|
+	WHILE _while_open M_BOOLEAN LPAREN Exp {p21e($5);} RPAREN M_BOOLEAN Statement  { $$=p23($3, $5, $8, $9, tables, offsets);closeScope();while_counter-=1;}|
 	marker RPAREN M_BOOLEAN Statement ELSE N_BOOLEAN _scope_close M_BOOLEAN _scope_open Statement 
 													{ 
 														$$=p24($1, $3, $4, $6, $8, $10);
+														closeScope();
 													}  
-				{ 
-					$$=p22(); /*9 should be inner statement*/
-				} 
-				_scope_close
+	;
+	SWITCH_HEAD:
+	 SWITCH _switch_open LPAREN Exp RPAREN {$$=p26e($4);}
+	;
+SWITCH_BODY:
+	LBRACE CaseList RBRACE {$$=p26f($2);}
 	;
 	
 _switch_open:	
@@ -178,8 +186,8 @@ CaseList :
 	CaseStatement  {$$=p28($1, tables,offsets);}
 	;
 CaseStatement : 
-	CaseDec {switch_case_counter+=1; } Statements  {$$=p29($2, $3, tables,offsets); switch_case_counter-=1;}|
-	CaseDec  {$$=p30($1, tables,offsets);}
+	CaseDec {switch_case_counter+=1; } M_BOOLEAN Statements  {$$=p29($1, $3, $4, tables,offsets); switch_case_counter-=1;}|
+	CaseDec M_BOOLEAN {$$=p30($1,$2, tables,offsets);}
 	;
 CaseDec : 
 	CASE NUM COLON  {$$=p31($1, $2, $3, tables,offsets);}|
@@ -232,6 +240,7 @@ int main()
 
 	try {
 		EMIT_DATA("err_msg1:   .asciiz \"Error division by zero\\n\"");
+		EMIT(".globl main");
 		EMIT("div_by_zero:");
 		EMIT("li $v0, 4");
 		EMIT("la $a0, err_msg1");
@@ -242,11 +251,10 @@ int main()
 		#ifdef DEBUG
 		cout << result <<endl;
 		#endif
-		//HW5:
-		EMIT("li $v0, 10");
-		EMIT("syscall");
+		#ifndef HW3
 		CodeBuffer::instance().printDataBuffer();
 		CodeBuffer::instance().printCodeBuffer();
+		#endif
 		return result;
 	}
 	catch (Error & er)
@@ -273,6 +281,10 @@ void insertFunction(sp retType , sp id, sp formals, TablesPtr tables, OffsetsPtr
 		catch(SymTable::SymbolAlreadyExists & e){
 			throw ErrorDef(id->lexeme);
 		}
+				
+	EMIT(id->lexeme + ":");
+	EMIT("sub $fp, $sp, 4");
+	
 	curr_ret_type = retType->returnType;
 }
 //TODO: We need to insert arguments onto scope (with -1...-2 etc) taken from 'formals'
@@ -284,7 +296,6 @@ cout << "openFuncScope" <<endl;
 		SymTable t=SymTable::createWithParent(TOP_T);
 		PUSH_T(t);
 		PUSH_O(TOP_O);
-		RegisterPoolManager::instance().push();
 
 		//TODO:get argument names...
 		#ifdef DEBUG
@@ -297,20 +308,14 @@ cout << "openFuncScope" <<endl;
 		catch(SymTable::SymbolAlreadyExists &e){
 			throw ErrorDef(e.s);
 		}
-		//update argument place/address (needs to be in AddressDesc)
-		//We assume args are just above the $fp (loaded by caller)
-		for (int i = 0; i< args.size(); i++) 
-		{
-			args[i]->place = 	ToString<int>(i*-4) + "($fp)";
-		}
 		
 		
 }
 void closeScope() {
-		//endScope();
-		//TOP_T.print();
-		
+		#ifdef HW3
+		endScope();
+		TOP_T.print();
+		#endif
 		POP_T;
 		POP_O;
-		RegisterPoolManager::instance().pop();
 }

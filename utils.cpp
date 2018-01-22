@@ -1,6 +1,14 @@
 #include "utils.h"
 #include "parser.tab.hpp"
 
+int EMIT(string line) {
+	#ifdef DEBUG
+	cout << "					; " <<line <<endl;
+	#endif DEBUG
+	return CodeBuffer::instance().emit(string(line));
+
+}
+
 void SymTable::insert(string symbolName, int offset, SymbolType symbolType) {
 	try {
 		getType(symbolName);
@@ -16,11 +24,7 @@ void SymTable::insert(string symbolName, int offset, SymbolType symbolType) {
 		cout << table.size() - 1 << ": Symbol(" << symbolName << "," << offset << "," << symbolType << ")" << " Table " << getDepth() << endl;
 #endif
 
-		//hw5: if we insert a function than we need to emit a label
-		if (symbolType.isFunction) {
-			EMIT(symbolName + ":");
-			EMIT("sub $fp, $sp, 4");
-		}
+
 	}
 }
 

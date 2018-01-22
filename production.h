@@ -101,6 +101,28 @@ sp p1(sp funcs, TablesPtr tables, OffsetsPtr offsets) {
 
 	return sp(new Node());
 }
+
+void empty_boolean_expression(sp exp) {
+	PRINT_COMMENT("unresolved boolean expression");
+	//m1 code if exp is true
+	string quad1 = CodeBuffer::instance().next();
+	exp->reg = GET_REG();
+	EMIT("li " + exp->reg + ", " + ToString<int>(1));
+	vector<int> list1 = CodeBuffer::makelist(EMIT("j "));
+	//m2 code if exp is false
+	string quad2 = CodeBuffer::instance().next();
+	EMIT("li " + exp->reg + ", " + ToString<int>(0));
+	//back patching
+	PRINT_COMMENT("back-patching exp->truelist with " + quad1);
+	CodeBuffer::instance().bpatch(exp->truelist, quad1);
+	PRINT_COMMENT("back-patching exp->falselist with " + quad2);
+	CodeBuffer::instance().bpatch(exp->falselist, quad2);
+	string lbl = CodeBuffer::instance().next();
+	PRINT_COMMENT("back-patching list1 with " + lbl);
+	CodeBuffer::instance().bpatch(list1, lbl);
+}
+
+
 //Funcs->e
 sp p3e(TablesPtr tables, OffsetsPtr offsets) {
 #ifdef DEBUG
@@ -147,9 +169,13 @@ sp p4(sp retType, sp id, sp lparen, sp formals, sp rparen, sp lbrace, sp stateme
 	//hw5:
 	SymbolType symType = TOP_T.getType(id->lexeme);
 	PRINT_COMMENT("rule p4 FuncDecl -> RetType ID LPAREN Formals RPAREN LBRACE Statements RBRACE");
-	PRINT_COMMENT("poping arguments");
+	//PRINT_COMMENT("poping arguments");
 //	EMIT("add $sp, $sp, " + ToString<int>(4 * symType.argTypes.size()));
-//	EMIT("jr $ra");
+	//we need it because a void function dont got to have return;
+
+	PRINT_COMMENT("Cleanning stack");
+	EMIT("add $sp, $sp, "+ToString<int>(4*TOP_O));
+	EMIT("jr $ra");
 	return a;
 }
 //RetType -> Type
@@ -241,8 +267,7 @@ sp p11(sp type, sp id, TablesPtr tables, OffsetsPtr offsets) {
 	ar arg = ar(new Argument());
 	arg->type = type->terminal->token;
 	arg->id = id->lexeme;
-	//hw5
-	a->place= "unset";//id->place;
+
 
 	a->argument = ar(arg);
 	
@@ -259,6 +284,7 @@ sp p12(sp statement, TablesPtr tables, OffsetsPtr offsets) {
 	PRINT_COMMENT("rule p12 Statements -> Statement");
 	sp a = sp(new Node());
 	a->nextlist = statement->nextlist;
+	a->breaklist = statement->breaklist;
 	return a;
 
 }
@@ -270,9 +296,10 @@ sp p13(sp statements, sp m,sp statement, TablesPtr tables, OffsetsPtr offsets) {
 	//HW5:
 	PRINT_COMMENT("rule p13 Statements -> Statements Statement");
 	sp a = sp(new Node());
-	PRINT_COMMENT("back-patching stmt->nextlist with " + m->quad);
+	PRINT_COMMENT("back-patching stmts->nextlist with " + m->quad);
 	CodeBuffer::instance().bpatch(statements->nextlist, m->quad);
 	a->nextlist = statement->nextlist;
+	a->breaklist = CodeBuffer::merge(statements->breaklist, statement->breaklist);
 	return a;
 }
 //Statement -> LBRACE Statements RBRACE
@@ -283,6 +310,7 @@ sp p14(sp lbrace, sp statements, sp rbrace, TablesPtr tables, OffsetsPtr offsets
 	sp a = sp(new Node());
 	//hw5:
 	a->nextlist = statements->nextlist;
+	a->breaklist = statements->breaklist;
 
 	return a;
 }
@@ -303,7 +331,7 @@ sp p15(sp type, sp id, sp sc, TablesPtr tables, OffsetsPtr offsets) {
 	return a;
 }
 //Statement -> Type ID ASSIGN Exp SC
-sp p16(sp type, sp id, sp assign, sp exp, sp sc, TablesPtr tables, OffsetsPtr offsets) {
+sp p16(sp type, sp id, sp assign, sp exp, sp sc,TablesPtr tables, OffsetsPtr offsets) {
 #ifdef DEBUG
 	cout << "p16 Statement -> Type ID ASSIGN Exp SC" << endl;
 #endif DEBUG
@@ -312,10 +340,13 @@ sp p16(sp type, sp id, sp assign, sp exp, sp sc, TablesPtr tables, OffsetsPtr of
 	sp a = sp(new Node());
 	DECLARE_VAR(type, id);
 	//hw5:
-	PRINT_COMMENT("declaring "+id->lexeme+ " with the value in " + exp->place);
+	if (symType.type == BOOL && exp->reg.empty()) {
+		empty_boolean_expression(exp);
+	}
+	PRINT_COMMENT("declaring "+id->lexeme+ " with the value in " + exp->reg);
 	EMIT("sub $sp, $sp, 4");
-	EMIT("sw "+ exp->place +", ($sp)");
-	FREE_REG(exp->place);
+	EMIT("sw "+ exp->reg +", ($sp)");
+	FREE_REG(exp->reg);
 	return a;
 }
 //Statement -> ID ASSIGN Exp SC
@@ -328,10 +359,13 @@ sp p17(sp id, sp assign, sp exp, sp sc, TablesPtr tables, OffsetsPtr offsets) {
 	ASSERT_ASSIGNABLE(symType.type, exp->expressionType);
 	sp a = sp(new Node());
 	//hw5:
+	if (exp->reg.empty()) {
+		empty_boolean_expression(exp);
+	}
 	int offset = TOP_T.getOffset(id->lexeme);
-	PRINT_COMMENT("assigning to "+ id->lexeme + " the value in " + exp->place);
-	EMIT("sw " + exp->place + ", " + ToString<int>(offset*-4) + "($fp)");
-	FREE_REG(exp->place);
+	PRINT_COMMENT("assigning to "+ id->lexeme + " the value in " + exp->reg);
+	EMIT("sw " + exp->reg + ", " + ToString<int>(offset*-4) + "($fp)");
+	FREE_REG(exp->reg);
 	return a;
 }
 //Statement -> Call SC
@@ -340,7 +374,7 @@ sp p18(sp _call, sp sc, TablesPtr tables, OffsetsPtr offsets) {
 	cout << "p18" << endl;
 #endif DEBUG
 	sp a = sp(new Node());
-	FREE_REG(_call->place);
+	if(!_call->reg.empty()) FREE_REG(_call->reg);
 
 	return a;
 };
@@ -354,7 +388,8 @@ sp p19(sp _return, sp sc, TablesPtr tables, OffsetsPtr offsets, int curr_ret_typ
 	ASSERT_ANY_OF_TYPES(curr_ret_type, types);
 	sp a = sp(new Node());
 
-
+	PRINT_COMMENT("Cleanning stack");
+	EMIT("add $sp, $sp, "+ToString<int>(4*TOP_O));
 	EMIT("jr $ra");
 
 	return a;
@@ -366,8 +401,13 @@ sp p20(sp _return, sp exp, sp sc, TablesPtr tables, OffsetsPtr offsets, int curr
 #endif DEBUG
 	ASSERT_ASSIGNABLE(curr_ret_type, exp->expressionType);
 	sp a = sp(new Node());
+	if (exp->reg.empty()) {
+		empty_boolean_expression(exp);
+	}
 
-	EMIT("move $v0, " + exp->place);
+	EMIT("move $v0, " + exp->reg);
+	PRINT_COMMENT("Cleanning stack");
+	EMIT("add $sp, $sp, "+ToString<int>(4*TOP_O));
 	EMIT("jr $ra");
 
 	return a;
@@ -380,17 +420,21 @@ sp p21(sp exp, sp m, sp statement, sp m2) {
 
 	sp a = sp(new Node());
 	//hw5:
-	PRINT_COMMENT("rule p21 Statement IF LPAREN Exp RPAREN Statement");
-	PRINT_COMMENT("back-patching exp->truelist with " + m->quad);
+	//PRINT_COMMENT("rule p21 Statement IF LPAREN Exp RPAREN Statement");
+	//PRINT_COMMENT("back-patching exp->truelist with " + m->quad);
 	CodeBuffer::instance().bpatch(exp->truelist, m->quad);
-	PRINT_COMMENT("merging exp->falselist with stmt->nextlist");
+	//PRINT_COMMENT("merging exp->falselist with stmt->nextlist");
 	a->nextlist = CodeBuffer::merge(exp->falselist, statement->nextlist);
-	PRINT_COMMENT("back - patching exp->falselist with " + m2->quad);
+	//PRINT_COMMENT("back - patching exp->falselist with " + m2->quad);
 	CodeBuffer::instance().bpatch(exp->falselist , m2->quad);
+	a->breaklist = statement->breaklist;
 	return a;
 };
 
 sp p21e(sp exp) {
+#ifdef DEBUG
+	cout << "p21e" << endl;
+#endif DEBUG
 	vector<int> types;
 	types.push_back(BOOL);
 	ASSERT_ANY_OF_TYPES(exp->expressionType, types);
@@ -429,8 +473,9 @@ sp p23(sp m1, sp exp, sp m2, sp statement, TablesPtr tables, OffsetsPtr offsets)
 	CodeBuffer::instance().bpatch(statement->nextlist, m1->quad);
 	PRINT_COMMENT("back-patching exp->truelist with " + m2->quad);
 	CodeBuffer::instance().bpatch(exp->truelist, m2->quad);
-	a->nextlist = exp->falselist;
+	a->nextlist = CodeBuffer::merge(exp->falselist, statement->breaklist);
 	EMIT("j " + m1->quad);
+	CodeBuffer::instance().bpatch(a->nextlist, CodeBuffer::instance().next());
 	return a;
 };
 //Statement -> Statement (inner statement for IF) TODO: My addition
@@ -448,6 +493,10 @@ sp p24(sp exp, sp m1, sp s1, sp n, sp m2, sp s2) {
 	CodeBuffer::instance().bpatch(exp->falselist, m2->quad);
 
 	a->nextlist = CodeBuffer::merge(CodeBuffer::merge(s1->nextlist, n->nextlist), s2->nextlist);
+	string lbl = CodeBuffer::instance().next();
+	PRINT_COMMENT("back-patching N->nextlist with " + lbl);
+	CodeBuffer::instance().bpatch(n->nextlist, lbl);
+	a->breaklist = CodeBuffer::merge(s1->breaklist, s2->breaklist);
 
 	return a;
 };
@@ -460,33 +509,93 @@ sp p25(sp _break, sp sc, TablesPtr tables, OffsetsPtr offsets, int while_counter
 		throw ErrorUnexpectedBreak();
 	}
 	sp a = sp(new Node());
-
+	a->breaklist = CodeBuffer::makelist(EMIT("j "));
 	return a;
 };
-//Statement -> SWITCH LPAREN Exp RPRAREN LBRACE CaseList RBREACE SC
-sp p26(sp _switch, sp lparen, sp exp, sp rparen, sp lbrace, sp caseList, sp rbrace, sp sc, TablesPtr tables, OffsetsPtr offsets) {
+//Statement -> SWITCH_HEAD SWITCH_BODY SC
+sp p26(sp head, sp body, TablesPtr tables, OffsetsPtr offsets) {
 #ifdef DEBUG
 	cout << "p26" << endl;
 #endif DEBUG
 	sp a = sp(new Node());
-
-
+	string test_lbl = CodeBuffer::instance().next();
+	//PRINT_COMMENT("bpatch head->nextlist with " + test_lbl);
+	CodeBuffer::instance().bpatch(head->nextlist, test_lbl);
+	for (int i = 0; i < body->value_list.size(); ++i) {
+		if (body->defalts[i]) {
+			//PRINT_COMMENT("jumping to default in " + (body->quad_list)[i]);
+			EMIT("j " + (body->quad_list)[i]);
+		}
+		else {
+			//PRINT_COMMENT("case number " + ToString<int>(i));
+			EMIT("beq " + head->reg + ", " + (body->value_list)[i] + ", " + (body->quad_list)[i]);
+		}
+		string next_case = CodeBuffer::instance().next();
+		//PRINT_COMMENT("bpatch body->not_break_lists "+ToString<int>(i)+" with " + next_case);
+		CodeBuffer::instance().bpatch((body->not_break_lists)[i], next_case);
+	}
+	string next_lbl = CodeBuffer::instance().next();
+	//PRINT_COMMENT("bpatch body->breaklist with " + next_lbl);
+	CodeBuffer::instance().bpatch(body->breaklist, next_lbl);
 	return a;
 };
 
-void p26e(sp exp) {
+sp p26e(sp exp) {
 	vector<int> types;
 	types.push_back(INT);
 	types.push_back(BYTE);
 	ASSERT_ANY_OF_TYPES(exp->expressionType, types);
+	//hw5:
+	sp a = sp(new Node());
+	//PRINT_COMMENT("switch number: " + ToString<int>(switch_index) + " ;jumping to test which expressions we should do");
+	a->reg = exp->reg;
+	a->nextlist = CodeBuffer::makelist(EMIT("j "));
+
+	return a;
+}
+
+sp p26f(sp caselist) {
+	sp a = sp(new Node());
+	a->value_list = caselist->value_list;
+	PRINT_COMMENT("values are:");
+	for (int i = 0; i < a->value_list.size(); ++i) {
+		PRINT_COMMENT(a->value_list[i]);
+	}
+	a->quad_list = caselist->quad_list;
+	a->not_break_lists = caselist->not_break_lists;
+	a->breaklist = caselist->breaklist;
+	a->defalts = caselist->defalts;
+	PRINT_COMMENT("defalts are:");
+	for (int i = 0; i < a->defalts.size(); ++i) {
+		PRINT_COMMENT(ToString<bool>(a->defalts[i]));
+	}
+	return a;
+
 }
 //STatement -> CaseList CaseSTatmetn
 sp p27(sp caseList, sp caseStatement, TablesPtr tables, OffsetsPtr offsets) {
 #ifdef DEBUG
 	cout << "p27" << endl;
 #endif DEBUG
+	PRINT_COMMENT("p27 CaseList -> CaseList CaseSTatmetn");
 	sp a = sp(new Node());
-
+	a->value_list = caseList->value_list;
+	a->quad_list = caseList->quad_list;
+	a->not_break_lists = caseList->not_break_lists;
+	a->breaklist = CodeBuffer::merge(caseList->breaklist, caseStatement->breaklist);
+	a->defalts = caseList->defalts;
+	a->value_list.push_back(caseStatement->value);
+	PRINT_COMMENT("values are:");
+	for (int i = 0; i < a->value_list.size(); ++i) {
+		PRINT_COMMENT(a->value_list[i]);
+	}
+	a->quad_list.push_back(caseStatement->quad);
+	a->not_break_lists.push_back(caseStatement->nextlist);
+	a->defalts.push_back(caseStatement->defalt);
+	PRINT_COMMENT("defalts are:");
+	for (int i = 0; i < a->defalts.size(); ++i) {
+		PRINT_COMMENT(ToString<bool>(a->defalts[i]));
+	}
 	return a;
 };
 //CaseList -> CaseStatemnt
@@ -494,26 +603,55 @@ sp p28(sp caseStatement, TablesPtr tables, OffsetsPtr offsets) {
 #ifdef DEBUG
 	cout << "p28" << endl;
 #endif DEBUG
+	PRINT_COMMENT("p28 CaseList -> CaseStatemnt");
 	sp a = sp(new Node());
-
+	//stack<string> value_list;
+	//stack<string> quad_list;
+	a->value_list.push_back(caseStatement->value);
+	PRINT_COMMENT("values are:");
+	for (int i = 0; i < a->value_list.size(); ++i) {
+		PRINT_COMMENT(a->value_list[i]);
+}
+	a->quad_list.push_back(caseStatement->quad);
+	PRINT_COMMENT("defalts are:");
+	a->defalts.push_back(caseStatement->defalt);
+	for (int i = 0; i < a->defalts.size(); ++i) {
+		PRINT_COMMENT(ToString<bool>(a->defalts[i]));
+	}
+	a->breaklist = caseStatement->breaklist;
+	a->not_break_lists.push_back(caseStatement->nextlist);
 	return a;
 };
 //CaseStatmetn -> CaseDec Statements
-sp p29(sp caseDec, sp statements, TablesPtr tables, OffsetsPtr offsets) {
+sp p29(sp caseDec, sp m, sp statements, TablesPtr tables, OffsetsPtr offsets) {
 #ifdef DEBUG
 	cout << "p29" << endl;
 #endif DEBUG
+	PRINT_COMMENT("p29 CaseStatmetn -> CaseDec M Statements");
 	sp a = sp(new Node());
-
+	a->breaklist = statements->breaklist;
+	a->value = caseDec->value;
+	//PRINT_COMMENT("p29 value is: " + a->value);
+	a->defalt = caseDec->defalt;
+	//PRINT_COMMENT("p29 defalt is: " + ToString<bool>(a->defalt));
+	a->quad = m->quad;
+	a->nextlist = statements->nextlist;
+	a->nextlist.push_back(EMIT("j "));
 	return a;
 };
 //CaseStatemtn -> CaseDec
-sp p30(sp caseDec, TablesPtr tables, OffsetsPtr offsets) {
+sp p30(sp caseDec, sp m, TablesPtr tables, OffsetsPtr offsets) {
 #ifdef DEBUG
 	cout << "p30" << endl;
 #endif DEBUG
+	PRINT_COMMENT("p30 CaseStatemtn -> CaseDec");
 	sp a = sp(new Node());
-
+	a->value = caseDec->value;
+	//PRINT_COMMENT("p30 value is: "+ a->value);
+	a->defalt = caseDec->defalt;
+	//PRINT_COMMENT("p30 defalt is: " + ToString<bool>(a->defalt));
+	a->quad = m->quad;
+	a->nextlist = CodeBuffer::makelist(EMIT("j "));
 	return a;
 };
 //CaseDec -> CASE NUM COLON
@@ -521,8 +659,12 @@ sp p31(sp _case, sp num, sp colon, TablesPtr tables, OffsetsPtr offsets) {
 #ifdef DEBUG
 	cout << "p31" << endl;
 #endif DEBUG
+	PRINT_COMMENT("p31 CaseDec -> CASE " + num->lexeme + " COLON");
 	sp a = sp(new Node());
-
+	a->value = num->lexeme;
+	//PRINT_COMMENT("p31 value is: " + a->value);
+	a->defalt = false;
+	//PRINT_COMMENT("p31 defalt is: " + ToString<bool>(a->defalt));
 	return a;
 };
 //CaseDec -> CASE NUM B COLON
@@ -530,8 +672,12 @@ sp p32(sp _case, sp num, sp b, sp colon, TablesPtr tables, OffsetsPtr offsets) {
 #ifdef DEBUG
 	cout << "p32" << endl;
 #endif DEBUG
+	PRINT_COMMENT("p32 CaseDec -> CASE " + num->lexeme + " B COLON");
 	sp a = sp(new Node());
-
+	a->value = num->lexeme;
+	//PRINT_COMMENT("p32 value is: " + a->value);
+	a->defalt = false;
+	//PRINT_COMMENT("p32 defalt is: " + ToString<bool>(a->defalt));
 	return a;
 };
 //CaseDec -> DEFAULT COLON
@@ -539,11 +685,15 @@ sp p33(sp _default, sp colon, TablesPtr tables, OffsetsPtr offsets, DefaultsPtr 
 #ifdef DEBUG
 	cout << "p33 CaseDec -> DEFAULT COLON" << TOP_D << endl;
 #endif DEBUG
+	PRINT_COMMENT("p33 CaseDec -> DEFAULT COLON");
 	if (++TOP_D > 1) {
 		throw ErrorTooManyDefaults();
 	}
 	sp a = sp(new Node());
-
+	a->defalt = true;
+	a->value = "has_no_value";
+	//PRINT_COMMENT("p33 value is: " + a->value);
+	//PRINT_COMMENT("p33 defalt is: " + ToString<bool>(a->defalt));
 	return a;
 };
 //Call -> ID LPAREN ExpList RPAREN
@@ -566,7 +716,7 @@ sp p34(sp id, sp lparen, sp expList, sp rparen, TablesPtr tables, OffsetsPtr off
 	a->returnType = expectedType.type;
 
 	//HW5:
-	PRINT_COMMENT("Call " + id->lexeme + "(expList)");
+	PRINT_COMMENT("rule p34 Call " + id->lexeme + "(expList)");
 	//for printing:
 	if (id->lexeme == "printi" || id->lexeme == "print") {
 		//for printi
@@ -575,34 +725,54 @@ sp p34(sp id, sp lparen, sp expList, sp rparen, TablesPtr tables, OffsetsPtr off
 		//we can canonalize it by desiding that in any case the field expList.place will hold the adress of the value;
 		//
 		// for print("some_string") there can be only one way. the string has to have a label.
-		// the label has to be saved in explist->place.\
+		// the label has to be saved in explist->reg.\
 
 		int syscall_num = (id->lexeme == "printi") ? 1 : 4 ;
 		EMIT("li $v0, " + (ToString<int>(syscall_num))); //system call for printing integer;
-		EMIT("move $a0, " + ((expList->place.empty())? expList->place: ""));
+		EMIT("move $a0, " + expList->reg);
 		EMIT("syscall");
-		FREE_REG(expList->place);
-		expList->place="";
+		//if(id->lexeme == "printi") 
+		FREE_REG(expList->reg);
+		expList->reg="";
 		return a;
 	}
+	//store registers
+	PRINT_COMMENT("Storing registers");
 	STORE_ALL();
-	//previous return address
-	EMIT("sub $sp, sp, 4");
+	//store previous return address
+	EMIT("sub $sp, $sp, 4");
 	EMIT("sw $ra, ($sp)");
-	//arguments
-	vector<ar> args= expList->arguments;
-	for (int i = 0; i< args.size(); i++)
+	//store arguments
+	vector<ex> expressions= expList->expressionList;
+	PRINT_COMMENT("Storing "+ToString<int>(expressions.size())+" arguments");
+	for (int i = 0; i< expressions.size(); i++)
 	{
-		EMIT("sub $sp, sp, 4");
-		EMIT("sw "+args[i]->place+", ($sp)");
+		EMIT("sub $sp, $sp, 4");
+		EMIT("sw "+expressions[i]->reg+", ($sp)");
 	}
 
+	//new register pool
+	RegisterPoolManager::instance().push();
+
 	EMIT("jal " + id->lexeme);
-	//somehow we need to push the argument to the stack.
-	//we need the code to be right after id->lexeme;
+
+	//pop register pool
+	RegisterPoolManager::instance().pop();
+
+	//pop args
+	PRINT_COMMENT("Poping arguments");
+	EMIT("add $sp, $sp, "+ToString<int>(expressions.size()*4));
+
+	//restore return address
+	EMIT("lw $ra, ($sp)");
+	EMIT("add $sp, $sp, 4");
+
+	//restore registers
+	PRINT_COMMENT("Restoring registers");
 	RESTORE_ALL();
-	a->place = GET_REG();
-	EMIT("move " + a->place+ " $v0");
+
+	a->reg = GET_REG();
+	EMIT("move " + a->reg+ " $v0");
 	return a;
 };
 //Call -> ID LPAREN RPAREN
@@ -622,11 +792,35 @@ sp p35(sp id, sp lparen, sp rparen, TablesPtr tables, OffsetsPtr offsets) {
 
 	sp a = sp(new Node());
 	a->returnType = expectedType.type;
+
+
+	//store registers
 	STORE_ALL();
+	//store previous return address
+	EMIT("sub $sp, $sp, 4");
+	EMIT("sw $ra, ($sp)");
+	//store arguments
+	//Dont have any
+
+	RegisterPoolManager::instance().push();
+
 	EMIT("jal " + id->lexeme);
+
+	RegisterPoolManager::instance().pop();
+
+	//pop args
+	//dont have any
+
+	//restore return address
+	EMIT("lw $ra, ($sp)");
+	EMIT("add $sp, $sp, 4");
+
+	//restore registers
 	RESTORE_ALL();
-	a->place = GET_REG();
-	EMIT("move " + a->place + " $v0");
+
+
+	a->reg = GET_REG();
+	EMIT("move " + a->reg + " $v0");
 	return a;
 };
 //ExpList -> Exp
@@ -636,10 +830,20 @@ sp p36(sp exp, TablesPtr tables, OffsetsPtr offsets) {
 #endif DEBUG
 	vector<int> expressionTypes;
 	expressionTypes.push_back(exp->expressionType);
+	if (exp->reg.empty()) {
+		empty_boolean_expression(exp);
+	}
+
+	//This is where exp becomes an argument
+	vector<ex> expressionList;
+	ex _ex = ex(new Expression());
+	_ex->reg = exp->reg;
+	expressionList.push_back(_ex);
 
 	sp a = sp(new Node());
 	a->expressionTypes = expressionTypes;
-	a->place = exp->place;
+	a->expressionList =expressionList;
+	a->reg = exp->reg;
 
 
 	return a;
@@ -649,16 +853,21 @@ sp p37(sp exp, sp comma, sp expList, TablesPtr tables, OffsetsPtr offsets) {
 #ifdef DEBUG
 	cout << "p37" << endl;
 #endif DEBUG
+
 	vector<int> expTypes(expList->expressionTypes);
-	//vector<string> expIds(expList->expressionIds);
 	vector<int>::iterator it1 = expTypes.begin();
-	//vector<string>::iterator it2 = expIds.begin();
 	expTypes.insert(it1, exp->expressionType);
-	//expIds.insert(it2, exp->expressionId);
 	sp a = sp(new Node());
 	a->expressionTypes = expTypes;
-	//a->expressionIds = expIds;
 
+	//This is where exp becomes an argument
+	vector<ex> expressionList;
+	ex _ex = ex(new Expression());
+	_ex->reg = exp->reg;
+	expressionList.push_back(_ex);
+
+	expressionList.insert(expressionList.end(), expList->expressionList.begin(), expList->expressionList.end());
+	a->expressionList=expressionList;
 
 	return a;
 };
@@ -709,7 +918,7 @@ sp p41(sp lparen, sp exp, sp rparen, TablesPtr tables, OffsetsPtr offsets) {
 	sp a = sp(new Node());
 	a->expressionType = exp->expressionType;
 	a->expressionId = exp->expressionId;
-	a->place = exp->place;
+	a->reg = exp->reg;
 	//hw5:
 	PRINT_COMMENT("rule p41 Exp -> LPAREN Exp RPAREN");
 	a->truelist = exp->truelist;
@@ -743,23 +952,23 @@ sp p42(sp exp1, sp binop, sp exp2, TablesPtr tables, OffsetsPtr offsets) {
 	}
 	sp a = sp(new Node());
 	a->expressionType = resultType;
-	a->place = exp1->place;
+	a->reg = exp1->reg;
 	string emit;
 	if (binop->lexeme == "+") {
-		emit = "add " + exp1->place + ", " + exp1->place + ", " + exp2->place;
+		emit = "add " + exp1->reg + ", " + exp1->reg + ", " + exp2->reg;
 	}
 	else if (binop->lexeme == "-"){
-		emit = "sub " + exp1->place + ", " + exp1->place + ", " + exp2->place;
+		emit = "sub " + exp1->reg + ", " + exp1->reg + ", " + exp2->reg;
 	}
 	else if (binop->lexeme == "*") {
-		emit = "mul " + exp1->place + ", " + exp1->place + ", " + exp2->place;
+		emit = "mul " + exp1->reg + ", " + exp1->reg + ", " + exp2->reg;
 	}
 	else {
-		EMIT("beq " + exp2->place + ", zero, div_by_zero");
-		emit = "div " + exp1->place + ", " + exp1->place + ", " + exp2->place;
+		EMIT("beq " + exp2->reg + ", zero, div_by_zero");
+		emit = "div " + exp1->reg + ", " + exp1->reg + ", " + exp2->reg;
 	}
 	EMIT(emit);
-	FREE_REG(exp2->place);
+	FREE_REG(exp2->reg);
 	return a;
 };
 //Exp -> ID
@@ -776,9 +985,9 @@ sp p43(sp id, TablesPtr tables, OffsetsPtr offsets) {
 
 	sp a = sp(new Node());
 	a->expressionType = type;
-	a->place = GET_REG();
+	a->reg = GET_REG();
 	int offset = TOP_T.getOffset(id->lexeme);
-	EMIT("lw " + a->place + ", " + ToString<int>(offset*-4) + "($fp)");
+	EMIT("lw " + a->reg + ", " + ToString<int>(offset*-4) + "($fp)");
 
 	return a;
 };
@@ -790,7 +999,7 @@ sp p44(sp _call, TablesPtr tables, OffsetsPtr offsets) {
 
 	sp a = sp(new Node());
 	a->expressionType = _call->returnType;
-	a->place = _call->place;
+	a->reg = _call->reg;
 
 
 
@@ -804,8 +1013,8 @@ sp p45(sp num, TablesPtr tables, OffsetsPtr offsets) {
 
 	sp a = sp(new Node());
 	a->expressionType = INT;
-	a->place = GET_REG();
-	EMIT("li " + a->place + ", " + num->lexeme);
+	a->reg = GET_REG();
+	EMIT("li " + a->reg + ", " + num->lexeme);
 	return a;
 };
 //Exp -> NUM B
@@ -818,8 +1027,8 @@ sp p46(sp num, sp b, TablesPtr tables, OffsetsPtr offsets) {
 	a->expressionType = BYTE;
 	a->value = num->lexeme;
 	ASSERT_IS_BYTE(atoi(num->lexeme.c_str()), num->lexeme);
-	a->place = GET_REG();
-	EMIT("li " + a->place+ ", " + num->lexeme);
+	a->reg = GET_REG();
+	EMIT("li " + a->reg+ ", " + num->lexeme);
 
 	return a;
 };
@@ -834,9 +1043,9 @@ sp p47(sp _string, TablesPtr tables, OffsetsPtr offsets) {
 	a->expressionType = STRING;
 	//hw5:
 	PRINT_COMMENT("rule p47 Exp -> STRING");
-	EMIT_DATA("label_" + ToString<int>(str_index) + ": .asciiz " +_string->lexeme);
-	a->place = GET_REG();
-	EMIT("la " + a->place + ", label_" + ToString<int>(str_index++));
+	EMIT_DATA("str_" + ToString<int>(str_index) + ": .asciiz " +_string->lexeme);
+	a->reg = GET_REG();
+	EMIT("la " + a->reg + ", str_" + ToString<int>(str_index++));
 
 	return a;
 };
@@ -849,8 +1058,9 @@ sp p48(sp _true, TablesPtr tables, OffsetsPtr offsets) {
 	sp a = sp(new Node());
 	a->expressionType = BOOL;
 	//hw5:
-	PRINT_COMMENT("rule p48 Exp -> TRUE");
 	a->truelist = CodeBuffer::makelist(EMIT("j "));
+	a->reg = GET_REG();
+	EMIT("li " + a->reg + ", 1");
 	a->boolian = true;
 	return a;
 };
@@ -862,10 +1072,10 @@ sp p49(sp _false, TablesPtr tables, OffsetsPtr offsets) {
 
 	sp a = sp(new Node());
 	a->expressionType = BOOL;
-	PRINT_COMMENT("rule p49 Exp -> FALSE");
 	a->falselist = CodeBuffer::makelist(EMIT("j "));
 	a->boolian = false;
-
+	a->reg = GET_REG();
+	EMIT("li " + a->reg + ", 0");
 	return a;
 };
 //Exp -> NOT Exp
@@ -905,11 +1115,9 @@ sp p51(sp exp1, sp _and, sp m, sp exp2, TablesPtr tables, OffsetsPtr offsets) {
 	sp a = sp(new Node());
 	a->expressionType = BOOL;
 	//hw5:
-	PRINT_COMMENT("rule p51 Exp -> Exp AND Exp");
 	PRINT_COMMENT("back-patching exp1->truelist with " + m->quad);
 	CodeBuffer::instance().bpatch(exp1->truelist, m->quad);
 	a->truelist = exp2->truelist;
-	PRINT_COMMENT("merging exp1->falselist with exp2->falselist");
 	a->falselist = CodeBuffer::merge(exp1->falselist, exp2->falselist);
 	return a;
 };
@@ -930,10 +1138,8 @@ sp p52(sp exp1, sp _or,sp m, sp exp2, TablesPtr tables, OffsetsPtr offsets) {
 	a->expressionType = BOOL;
 
 	//hw5:
-	PRINT_COMMENT("rule p52 Exp -> Exp OR Exp");
 	PRINT_COMMENT("back-patching exp1->falselist with " + m->quad);
 	CodeBuffer::instance().bpatch(exp1->falselist, m->quad);
-	PRINT_COMMENT("merging exp1->truelist with exp2->truelist");
 	a->truelist = CodeBuffer::merge(exp1->truelist, exp2->truelist);
 	a->falselist = exp2->falselist;
 
@@ -957,11 +1163,10 @@ sp p53(sp exp1, sp relop, sp exp2, TablesPtr tables, OffsetsPtr offsets) {
 	sp a = sp(new Node());
 	a->expressionType = BOOL;
 	//hw5:
-	PRINT_COMMENT("rule p54 Exp -> Exp RELOP Exp");
 	string e_str;
 	string rel = relop->lexeme;
-	string reg1 = exp1->place;
-	string reg2 = exp2->place;
+	string reg1 = exp1->reg;
+	string reg2 = exp2->reg;
 	if (rel == "==") e_str = "beq " + reg1 + ", " + reg2 + ", ";
 	if (rel == "!=") e_str = "bne " + reg1 + ", " + reg2 + ", ";
 	if (rel == "<") e_str = "blt " + reg1 + ", " + reg2 + ", ";
@@ -970,9 +1175,9 @@ sp p53(sp exp1, sp relop, sp exp2, TablesPtr tables, OffsetsPtr offsets) {
 	if (rel == ">=") e_str = "bge " + reg1 + ", " + reg2 + ", ";
 	a->truelist = CodeBuffer::makelist(EMIT(e_str));
 	a->falselist = CodeBuffer::makelist(EMIT("j "));
-	FREE_REG(exp1->place);
-	FREE_REG(exp2->place);
-
+	FREE_REG(exp1->reg);
+	FREE_REG(exp2->reg);
+	//TODO: need to return value;
 	return a;
 };
 

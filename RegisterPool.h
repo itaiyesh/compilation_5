@@ -31,6 +31,7 @@ class RegisterPool
 {
 	vector<string> registers; //used registers
 	vector<string> freeRegisters;
+	vector<string> getAllRegisters();
 public:
 	RegisterPool();
 	string getRegister();
